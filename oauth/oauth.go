@@ -296,9 +296,19 @@ var testHook = func(map[string]string) {}
 // method, URL and application params. See
 // http://tools.ietf.org/html/rfc5849#section-3.4 for more information about
 // signatures.
-func (c *Client) oauthParams(credentials *Credentials, method string, u *url.URL, form url.Values) (map[string]string, error) {
+func (c *Client) oauthParams(credentials *Credentials, method string, u *url.URL, form url.Values, oAuthCredentials *Credentials) (map[string]string, error) {
+	var consumer_key, consumer_secret string
+
+	if oAuthCredentials == nil {
+		consumer_key = c.Credentials.Token
+		consumer_secret = c.Credentials.Secret
+	} else {
+		consumer_key = oAuthCredentials.Token
+		consumer_secret = oAuthCredentials.Secret
+	}
+
 	oauthParams := map[string]string{
-		"oauth_consumer_key":     c.Credentials.Token,
+		"oauth_consumer_key":     consumer_key,
 		"oauth_signature_method": c.SignatureMethod.String(),
 		"oauth_version":          "1.0",
 	}
@@ -318,7 +328,7 @@ func (c *Client) oauthParams(credentials *Credentials, method string, u *url.URL
 
 	switch c.SignatureMethod {
 	case HMACSHA1:
-		key := encode(c.Credentials.Secret, false)
+		key := encode(consumer_secret, false)
 		key = append(key, '&')
 		if credentials != nil {
 			key = append(key, encode(credentials.Secret, false)...)
@@ -338,7 +348,7 @@ func (c *Client) oauthParams(credentials *Credentials, method string, u *url.URL
 		}
 		signature = base64.StdEncoding.EncodeToString(rawSignature)
 	case PLAINTEXT:
-		rawSignature := encode(c.Credentials.Secret, false)
+		rawSignature := encode(consumer_secret, false)
 		rawSignature = append(rawSignature, '&')
 		if credentials != nil {
 			rawSignature = append(rawSignature, encode(credentials.Secret, false)...)
@@ -359,7 +369,7 @@ func (c *Client) oauthParams(credentials *Credentials, method string, u *url.URL
 // information about transmitting OAuth parameters in a request body and
 // http://tools.ietf.org/html/rfc5849#section-3.5.2 for information about
 // transmitting OAuth parameters in a query string.
-func (c *Client) SignForm(credentials *Credentials, method, urlStr string, form url.Values) error {
+func (c *Client) SignForm(credentials *Credentials, method, urlStr string, form url.Values, oAuthCredentials *Credentials) error {
 	u, err := url.Parse(urlStr)
 	switch {
 	case err != nil:
@@ -367,7 +377,7 @@ func (c *Client) SignForm(credentials *Credentials, method, urlStr string, form 
 	case u.RawQuery != "":
 		return errors.New("oauth: urlStr argument to SignForm must not include a query string")
 	}
-	p, err := c.oauthParams(credentials, method, u, form)
+	p, err := c.oauthParams(credentials, method, u, form, nil)
 	if err != nil {
 		return err
 	}
@@ -381,7 +391,7 @@ func (c *Client) SignForm(credentials *Credentials, method, urlStr string, form 
 func (c *Client) SignParam(credentials *Credentials, method, urlStr string, params url.Values) {
 	u, _ := url.Parse(urlStr)
 	u.RawQuery = ""
-	p, _ := c.oauthParams(credentials, method, u, params)
+	p, _ := c.oauthParams(credentials, method, u, params, nil)
 	for k, v := range p {
 		params.Set(k, v)
 	}
@@ -397,8 +407,8 @@ var oauthKeys = []string{
 	"oauth_version",
 }
 
-func (c *Client) authorizationHeader(credentials *Credentials, method string, u *url.URL, params url.Values) (string, error) {
-	p, err := c.oauthParams(credentials, method, u, params)
+func (c *Client) authorizationHeader(credentials *Credentials, method string, u *url.URL, params url.Values, oAuthCredentials *Credentials) (string, error) {
+	p, err := c.oauthParams(credentials, method, u, params, oAuthCredentials)
 	if err != nil {
 		return "", err
 	}
@@ -424,10 +434,10 @@ func (c *Client) authorizationHeader(credentials *Credentials, method string, u 
 // method, URL and parameters.
 //
 // AuthorizationHeader is deprecated. Use SetAuthorizationHeader instead.
-func (c *Client) AuthorizationHeader(credentials *Credentials, method string, u *url.URL, params url.Values) string {
+func (c *Client) AuthorizationHeader(credentials *Credentials, method string, u *url.URL, params url.Values, oAuthCredentials *Credentials) string {
 	// Signing a request can return an error. This method is deprecated because
 	// this method does not return an error.
-	v, _ := c.authorizationHeader(credentials, method, u, params)
+	v, _ := c.authorizationHeader(credentials, method, u, params, oAuthCredentials)
 	return v
 }
 
@@ -435,8 +445,8 @@ func (c *Client) AuthorizationHeader(credentials *Credentials, method string, u 
 //
 // See http://tools.ietf.org/html/rfc5849#section-3.5.1 for information about
 // transmitting OAuth parameters in an HTTP request header.
-func (c *Client) SetAuthorizationHeader(header http.Header, credentials *Credentials, method string, u *url.URL, params url.Values) error {
-	v, err := c.authorizationHeader(credentials, method, u, params)
+func (c *Client) SetAuthorizationHeader(header http.Header, credentials *Credentials, method string, u *url.URL, params url.Values, oAuthCredentials *Credentials) error {
+	v, err := c.authorizationHeader(credentials, method, u, params, oAuthCredentials)
 	if err != nil {
 		return err
 	}
@@ -445,7 +455,7 @@ func (c *Client) SetAuthorizationHeader(header http.Header, credentials *Credent
 }
 
 // Get issues a GET to the specified URL with form added as a query string.
-func (c *Client) Get(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
+func (c *Client) Get(client *http.Client, credentials *Credentials, urlStr string, form url.Values, oAuthCredentials *Credentials) (*http.Response, error) {
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return nil, err
@@ -456,7 +466,7 @@ func (c *Client) Get(client *http.Client, credentials *Credentials, urlStr strin
 	for k, v := range c.Header {
 		req.Header[k] = v
 	}
-	if err := c.SetAuthorizationHeader(req.Header, credentials, "GET", req.URL, form); err != nil {
+	if err := c.SetAuthorizationHeader(req.Header, credentials, "GET", req.URL, form, oAuthCredentials); err != nil {
 		return nil, err
 	}
 	req.URL.RawQuery = form.Encode()
@@ -466,7 +476,7 @@ func (c *Client) Get(client *http.Client, credentials *Credentials, urlStr strin
 	return client.Do(req)
 }
 
-func (c *Client) do(client *http.Client, method string, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
+func (c *Client) do(client *http.Client, method string, credentials *Credentials, urlStr string, form url.Values, oAuthCredentials *Credentials) (*http.Response, error) {
 	req, err := http.NewRequest(method, urlStr, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
@@ -475,7 +485,7 @@ func (c *Client) do(client *http.Client, method string, credentials *Credentials
 		req.Header[k] = v
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if err := c.SetAuthorizationHeader(req.Header, credentials, method, req.URL, form); err != nil {
+	if err := c.SetAuthorizationHeader(req.Header, credentials, method, req.URL, form, oAuthCredentials); err != nil {
 		return nil, err
 	}
 	if client == nil {
@@ -486,17 +496,17 @@ func (c *Client) do(client *http.Client, method string, credentials *Credentials
 
 // Post issues a POST with the specified form.
 func (c *Client) Post(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
-	return c.do(client, "POST", credentials, urlStr, form)
+	return c.do(client, "POST", credentials, urlStr, form, nil)
 }
 
 // Delete issues a DELETE with the specified form.
 func (c *Client) Delete(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
-	return c.do(client, "DELETE", credentials, urlStr, form)
+	return c.do(client, "DELETE", credentials, urlStr, form, nil)
 }
 
 // Put issues a PUT with the specified form.
 func (c *Client) Put(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*http.Response, error) {
-	return c.do(client, "PUT", credentials, urlStr, form)
+	return c.do(client, "PUT", credentials, urlStr, form, nil)
 }
 
 func (c *Client) requestCredentials(client *http.Client, credentials *Credentials, urlStr string, form url.Values) (*Credentials, url.Values, error) {
